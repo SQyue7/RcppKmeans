@@ -1,0 +1,2 @@
+useDynLib(RcppKmeans)
+exportPattern("^[[:alpha:]]+")

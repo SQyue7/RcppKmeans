@@ -1,0 +1,10 @@
+Package: RcppKmeans
+Type: Package
+Title: Rcpp Kmeans
+Version: 0.1
+Date: 2012-05-10
+Authors@R: c(person("Yan","Liebin",role=c("aut","cre"),email="yanlb@ucweb.com"))
+Description: Rcpp Kmeans
+License: GPL-2
+Depends: Rcpp (>= 0.9.9)
+LinkingTo: Rcpp
