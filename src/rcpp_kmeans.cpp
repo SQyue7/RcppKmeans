@@ -1,9 +1,8 @@
 #include "rcpp_kmeans.h"
-
+#include <functional>
 using namespace Rcpp ;
 
 //ISSUE
-// which distance method is best to mesure texts
 
 // TODO add more methods to calculate distances
 
@@ -12,21 +11,42 @@ typedef struct {
     std::list<int> dusts; // we use remove
 } cloud;
 
-typedef std::map<std::string, int> Point;
+// typedef std::map<std::string, int> Point;
+typedef std::map<size_t, int> Point;
 typedef std::map<int, Point> Map;
 
 // NOTE the table may be as big as i*j*8 bytes
 // hmm, requires lots of RAM!!
-//  <i ,<j, r> >
-static std::map<int, std::map<int, int> > *table;
 
-static double (*dist) (Point* xv, Point* yv);
+//  <i ,<j, r> >
+// static std::map<int, std::map<int, int> > *table;
+
+static long double (*dist) (Point* xv, Point* yv);
+
+static bool operator== (Point& l, Point& r)
+{
+    Point::iterator l_it;
+    Point::iterator r_it;
+    for (l_it = l.begin(); l_it != l.end(); ++l_it) {
+        r_it = r.find (l_it->first);
+        if (r_it == r.end()) {
+            return false;
+        }
+    }
+    for (r_it = r.begin(); r_it != r.end(); ++r_it) {
+        l_it = l.find (r_it->first);
+        if (l_it == l.end()) {
+            return false;
+        }
+    }
+    return true;
+}
 
 //@{
 // Euclidean distance
-double euclidean (Point* xv, Point* yv)
+long double euclidean (Point* xv, Point* yv)
 {
-    volatile double sum = 0;
+    volatile long double sum = 0.0;
     Point::iterator xv_it;
     Point::iterator yv_it;
     // match xs against ys
@@ -51,11 +71,11 @@ double euclidean (Point* xv, Point* yv)
 
 //@{
 // Cosine distance
-// NOTE we return the multiplicative inverse of cosine
-double cosine (Point* xv, Point* yv)
+// NOTE we return the multiplicative inverse of (cosine plus one)
+long double cosine (Point* xv, Point* yv)
 {
     //FIXME correct return type
-    volatile double sum = 0.0, xs = 0.0, ys = 0.0;
+    volatile long double sum = 0.0, xs = 0.0, ys = 0.0;
     Point::iterator xv_it;
     Point::iterator yv_it;
     // inner product, <x,y>, <x,x>
@@ -70,17 +90,18 @@ double cosine (Point* xv, Point* yv)
     for (yv_it = yv->begin(); yv_it != yv->end(); ++yv_it) {
         ys += (yv_it->second * yv_it->second);
     }
-    // NOTE we add 1 here to avoid sum == 1
-    return (xs * ys / (sum * sum + 1.0));
+    // 1/(1+cos<x,y>)
+    return 1.0 / (1.0 + sum * sum / xs * ys);
 }
 //@}
 
 
 
 //@{
-double distance (Map* freqTable_in, int x, int y)
+long double distance (Map* freqTable_in, int x, int y)
 {
-    int x_, y_, z;
+    int x_, y_;
+    long double z;
     if (x == y) return 0.0;
     if (x < y) {
         x_ = x, y_ = y;
@@ -119,9 +140,9 @@ double distance (Map* freqTable_in, int x, int y)
 int median (Map* freqTable_in, std::list<int> vec)
 {
     int x = 0/*, y = 0*/;
-    double max = 0;
-    double min = 2147483647;
-    int e = 0;
+    long double max = 0.0;
+    long double min = std::numeric_limits<long double>::max();
+    long double e = 0.0;
     std::list<int>::iterator x_it;
     std::list<int>::iterator y_it;
     // if euclidean return 0,
@@ -143,20 +164,25 @@ int median (Map* freqTable_in, std::list<int> vec)
 //@}
 
 //@{
-/**
- * @brief return the index of center that closest to @a points_in[@a index]
- *
- * @param points_in all points
- * @param index point's index
- * @param centers_in centers table
- * @return int the element position @a in centers_in
- **/
+
 // TODO accept method argument
+/**
+ * @brief ...
+ *
+ * @param freqTable_in ...
+ * @param index ...
+ * @param clouds ...
+ * @param cloudSize ...
+ * @return int the center of that cloud
+ **/
 int whichClosest (Map* freqTable_in, int index,
                   std::map<int, cloud> *clouds, int cloudSize)
 {
-    int dist = 0x7FFFFFFF;
-    int dist_t = 0;
+    // avoid empty cloud
+    // TODO keep or move one from another cloud that has a long distance from
+    // its center into this (*clouds)[index]
+    if ( (*clouds) [index].dusts.size() == 1) return index;
+    long double dist_t = 0.0, dist = std::numeric_limits<long double>::max();
     int which = index;
     // Performance bottle kneck
     for (int i = 0 ; i < cloudSize; ++i) {
@@ -181,7 +207,7 @@ int whichClosest (Map* freqTable_in, int index,
  * @return void
  **/
 inline void removeFromCenters (std::map<int, cloud> * clouds,
-                               int key, int value)
+                               const int key, const int value)
 {
 
     if (clouds && key > -1) {
@@ -201,7 +227,8 @@ inline void removeFromCenters (std::map<int, cloud> * clouds,
  * @param value ...
  * @return int
  **/
-inline void addToCenters (std::map<int, cloud> *  clouds, int key, int value)
+inline void addToCenters (std::map<int, cloud> *  clouds,
+                          int key, const int value)
 {
     if (clouds) {
         (*clouds) [key].dusts.push_back (value);
@@ -223,18 +250,21 @@ void updateCloudCenters (Map* freqTable_in, std::map<int, cloud> * clouds,
 //@}
 
 /**
- * @brief cluster points into @a cluster using distance @a method
+ * @brief ...
  *
- * @param points list of point, each point is a string vector
- * @param cluster the size of cluster
- * @param method the distance method to use
+ * @param points_in ...
+ * @param clusterSize_in ...
+ * @param iter_in ...
+ * @param method_in ...
  * @return SEXP
  **/
 SEXP Kmeans (SEXP points_in, SEXP clusterSize_in, SEXP iter_in, SEXP method_in)
 {
+    // inputs should be validated in R
     BEGIN_RCPP
-    if (table) delete table;
-    table = new std::map<int, std::map<int, int> >;
+    // the product table
+    // if (table) delete table;
+    // table = new std::map<int, std::map<int, int> >;
 
     List points (points_in);
     unsigned int pointsSize = points.size();
@@ -248,39 +278,69 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in, SEXP iter_in, SEXP method_in)
         dist = euclidean;
     }
     int cloudSize = as<int> (clusterSize_in);
+
     //@{
-    Map freqTable;
+    std::hash< std::string > hashFun;
+    Map freqTable; // < index <<hash,count>,<hash,count>,.. > >
     std::vector<std::string>::iterator v_it;
+    std::size_t v_t = 0LU;
     for (int i = 0; i < pointsSize; ++i) {
         Point v;
         std::vector<std::string> s = as<std::vector<std::string> > (points[i]);
         for (v_it = s.begin(); v_it != s.end(); ++v_it) {
-            // if found increase
-            if (v.find (*v_it) != v.end()) {
-                v[*v_it] += 1;
+            v_t = hashFun (*v_it);
+            if (v.find (v_t) != v.end()) {
+                v[v_t] ++;
             } else {
-                v[*v_it] = 1;
+                v[v_t] = 1;
             }
         }
         freqTable[i] = v;
     }
     //@}
-
     //@{
+    // initialize a cluster of size cluster
+    srand ( (int) time (NULL));
+    rand();
     // for quickly find out which cluster a point belongs to
     // cluster to each points, -1 indicates not assigned yet
-    std::vector<int> cluster (pointsSize);
+    // the value of @a cluster is the center of that cluster
+    std::vector<int> cluster (pointsSize), tmp;
     std::fill (cluster.begin(), cluster.end(), -1);
-    // initialize a cluster of size cluster
-    std::vector<int> tmp;
-    for (int i = 0; i < pointsSize; ++i) {
-        tmp.push_back (i);
-    }
 
-    std::random_shuffle (tmp.begin(), tmp.end());
-    // TODO if two points close enough are assigned as centers, they might be
-    // separated forever, so we'd better reject points that have center close to
-    // it, regarding to a threshold.
+    // make sure that no same points as centers
+    // check first cloudSize points
+
+    std::vector<int> shuffle (pointsSize);
+    for (int i = 0; i < pointsSize; ++i) {
+        shuffle[i] = i;
+    }
+    std::random_shuffle (shuffle.begin(), shuffle.end());
+    std::vector<int>::iterator sh_it = shuffle.begin();
+
+    volatile bool skip = false;
+    tmp.push_back (*sh_it);
+    for (int i = 1; i < cloudSize; ++i) {
+        // attempt to get a distinct point
+        do {
+            skip = false;
+            sh_it++;
+            if (sh_it == shuffle.end()) {
+                std::cout << "Error on reach end" << std::endl;
+                break;
+            }
+            for (int j = 0; j < i; ++j) {
+                // duplicated found
+                if (freqTable[*sh_it] == freqTable[tmp[j]]) {
+                    /* std::cout << ".. " << *sh_it << " .."<< std::endl; */
+                    skip = true;
+                    break;
+                }
+            }
+        } while (skip);
+        tmp.push_back (*sh_it);
+    }
+    shuffle.clear();
     std::map<int, cloud> clouds;
     for (int i = 0; i < cloudSize; ++i) {
         std::list<int> l;
@@ -288,18 +348,23 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in, SEXP iter_in, SEXP method_in)
         clouds[i].dusts = l;
         clouds[i].center_index = tmp[i];
         cluster[tmp[i]] = i;
+//         std::cout << tmp[i] << std::endl;
     }
+    tmp.clear();
     //@}
 
-    int which = 0;
-    bool fixed = true;
+    volatile int which = 0;
     int iter = as<int> (iter_in); // assert positive in R level
+    volatile int changed = 0;
+    int c = 0;
     while (iter--) {
-        fixed = true;
+        changed = 0;
+        c++;
         for (int i = 0; i < pointsSize; ++i) {
+            // one may change cluster alternatively cos' none is actually near
+            // to it
             which = whichClosest (&freqTable, i, &clouds, cloudSize);
             if (cluster[i] != which) {
-                /* NOTE is it better to exit if there is only one point */
                 /* change cluster[i] state */
                 /* remove */
                 removeFromCenters (&clouds, cluster[i], i);
@@ -307,10 +372,10 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in, SEXP iter_in, SEXP method_in)
                 cluster[i] = which;
                 addToCenters (&clouds, which, i);
                 // record which
-                fixed = false;
+                changed ++;
             }
         }
-        if (fixed) break;
+        if (changed == 0) break;
         // TODO it's better that only update which and cluster[i]
         // use a vector to store (which and cluster[i])
         updateCloudCenters (&freqTable, &clouds, cloudSize);
@@ -322,7 +387,9 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in, SEXP iter_in, SEXP method_in)
     }
     List z =  List::create (_["clusters"] = x,
                             _["iterations"] = as<int> (iter_in) - iter);
-    delete table;
+    // clean up
+    clouds.clear();
+    freqTable.clear();
     return z;
     END_RCPP
 
