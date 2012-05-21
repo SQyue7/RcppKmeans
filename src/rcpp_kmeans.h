@@ -3,6 +3,7 @@
 
 #include <Rcpp.h>
 
-RcppExport SEXP Kmeans(SEXP /*points*/, SEXP /*cluster*/, SEXP /*iter*/, SEXP /*method*/);
+RcppExport SEXP Kmeans(SEXP /*points*/, SEXP /*cluster*/,
+                       SEXP /*iter*/, SEXP /*method*/, SEXP epsilon);
 
 #endif
