@@ -1,14 +1,18 @@
 #include "rcpp_kmeans.h"
+#ifdef VERBOSE
 #include <sys/time.h>
+#endif
 #include <tr1/functional>
 using namespace Rcpp ;
-// TODO add more methods to calculate distances
+
+/**
+ * Types, Constants and functions
+ */
 static double eps = 0.0001;
 typedef struct {
     int center_index; // one of dusts
     std::list<int> dusts; // we use remove
 } cloud;
-
 typedef std::pair<int, int> iipair;
 typedef std::map<iipair, double> fulltableType;
 // typedef std::map<std::string, int> Point;
@@ -19,7 +23,6 @@ typedef struct {
     std::vector<int> zeroes;
 } products;
 static double (*dist) (Point* xv, Point* yv);
-
 //NOTE keys in std::map are sorted
 static bool operator== (Point& l, Point& r)
 {
@@ -36,9 +39,20 @@ static bool operator== (Point& l, Point& r)
     return true;
 }
 
+/**
+ * Distance implements
+ */
+// TODO add more methods to calculate distances
 //@{
 //FIXME
 // Euclidean distance
+/**
+ * @brief Euclidian distance
+ *
+ * @param xv ...
+ * @param yv ...
+ * @return double
+ **/
 double euclidean (Point* xv, Point* yv)
 {
     volatile double sum = 0.0;
@@ -65,13 +79,19 @@ double euclidean (Point* xv, Point* yv)
 
 //@{
 // Cosine distance
+/**
+ * @brief Cosine Distance, which is 1 - cos<x,y>
+ *
+ * @param xv ...
+ * @param yv ...
+ * @return double
+ **/
 double cosine (Point* xv, Point* yv)
 {
     if (*xv == *yv) return 0.0;
     volatile double sum = 0.0, xs = 0.0, ys = 0.0;
     Point::iterator xv_it;
     Point::iterator yv_it;
-    //  TODO parallelize by using openmp
     // inner product, <x,y>, <x,x>
     for (xv_it = xv->begin(); xv_it != xv->end(); ++xv_it) {
         yv_it = yv->find (xv_it->first);
@@ -84,11 +104,19 @@ double cosine (Point* xv, Point* yv)
     for (yv_it = yv->begin(); yv_it != yv->end(); ++yv_it) {
         ys += yv_it->second * yv_it->second;
     }
-    return 1.0 - (sum / xs) * (sum / ys);
+    return 1.0 - sum / sqrt (xs * ys);
 }
 //@}
 
 //@{
+/**
+ * @brief Interface to dist for caller
+ *
+ * @param freqTable_in ...
+ * @param x ...
+ * @param y ...
+ * @return double
+ **/
 double distance (Map* freqTable_in, int x, int y)
 {
     if (x == y) return 0.0;
@@ -123,10 +151,19 @@ double distance (Map* freqTable_in, int x, int y)
 //     }
 // }
 
-void addToFullTable (Map* freqTable_in, fulltableType& table, const int x_in, const int y_in)
+/**
+ * @brief Point-wise add a inner product <@a x_in, @a y_in> to @a table
+ *
+ * @param freqTable_in ...
+ * @param table ...
+ * @param x_in ...
+ * @param y_in ...
+ * @return void
+ **/
+void addToFullTable (Map* freqTable_in, fulltableType& table,
+                     const int x_in, const int y_in)
 {
     double r = 0.0;
-    if (x_in == y_in) return;
     if (x_in < y_in) {
         #pragma omp flush(table)
         if (table.find (iipair (x_in, y_in)) == table.end()) {
@@ -149,19 +186,45 @@ void addToFullTable (Map* freqTable_in, fulltableType& table, const int x_in, co
 }
 
 // value_in against list_in
-void addToFullTable (Map* freqTable_in, fulltableType& table, std::list<int> & list_in, const int value_in)
+/**
+ * @brief Vectorized addToFullTable
+ *
+ * @param freqTable_in ...
+ * @param table ...
+ * @param list_in ...
+ * @param value_in ...
+ * @return void
+ **/
+void addToFullTable (Map* freqTable_in, fulltableType& table,
+                     std::list<int> & list_in, const int value_in)
 {
     int dim = list_in.size();
     {
+        std::vector<int> vec (list_in.begin(), list_in.end());
         #pragma omp parallel for
         for (int i = 0; i < dim; ++i) {
-            addToFullTable (freqTable_in, table, i, value_in);
+            if (vec[i] != value_in) {
+                addToFullTable (freqTable_in, table, vec[i], value_in);
+            }
         }
     }
 }
 
+/**
+ * @brief Interface to get inner product via @a table
+ *
+ * @param table ...
+ * @param x ...
+ * @param y ...
+ * @param r ...
+ * @return void
+ **/
 void getDistance (fulltableType& table, int x, int y, double& r)
 {
+    if (x == y) {
+        r = 0.0;
+        return;
+    }
     std::map<iipair, double>::iterator it;
     if (x > y) {
         it = table.find (iipair (y, x));
@@ -175,6 +238,16 @@ void getDistance (fulltableType& table, int x, int y, double& r)
     }
 }
 
+/**
+ * @brief find one center_index that is nearest to @a index
+ *
+ * @param freqTable_in ...
+ * @param table ...
+ * @param index ...
+ * @param clouds ...
+ * @param cloudSize ...
+ * @return int
+ **/
 int whichClosest (Map* freqTable_in, fulltableType& table, int index,
                   std::map<int, cloud> &clouds, int cloudSize)
 {
@@ -235,7 +308,15 @@ inline void addToCenters (std::map<int, cloud> & clouds, Map* freqTable_in,
 }
 //@}
 
-int median (std::list<int> & vec, fulltableType& table)
+//@{
+/**
+ * @brief Get the centroid of @a vec
+ *
+ * @param vec ...
+ * @param table ...
+ * @return int
+ **/
+int centroid (std::list<int> & vec, fulltableType& table)
 {
     int x = 0/*, y = 0*/;
     double max = 0.0;
@@ -258,9 +339,17 @@ int median (std::list<int> & vec, fulltableType& table)
 //     std::cout << "MedianX " << x << std::endl;
     return x;
 }
-
+//@}
 
 //@{
+/**
+ * @brief Calculate the centroids
+ *
+ * @param clouds ...
+ * @param cloudSize ...
+ * @param table ...
+ * @return void
+ **/
 void updateCloudCenters (std::map<int, cloud> & clouds,
                          int cloudSize, fulltableType& table)
 {
@@ -268,7 +357,7 @@ void updateCloudCenters (std::map<int, cloud> & clouds,
         #pragma omp parallel for
         for (int i = 0; i < cloudSize; ++i) {
             /** clouds [i].center_index = median (clouds [i].dusts, i); */
-            int index = median (clouds [i].dusts, table);
+            int index = centroid (clouds [i].dusts, table);
             #pragma omp critical
             clouds [i].center_index = index;
         }
@@ -308,16 +397,18 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     int cloudSize = as<int> (clusterSize_in);
     std::tr1::hash<std::string> hashFun;
     /**
-     * it's better not to use hash but exactly match
+     * it's better to match exactly rather than hash
      */
     Map freqTable; // < index <<hash,count>,<hash,count>,.. > >
     std::vector<std::string>::iterator v_it;
     volatile std::size_t v_t = 0LU;
+#ifdef VERBOSE
+    //@{
     timeval tv0;
     timeval tv1;
-    //@{
     gettimeofday (&tv0, NULL);
     //@}
+#endif
     /**
      * TODO parallelization requires careful handling
      * #pragma omp parallel for
@@ -325,7 +416,8 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     {
         for (int i = 0; i < pointsSize; ++i) {
             Point v;
-            std::vector<std::string> s = as<std::vector<std::string> > (points[i]);
+            std::vector<std::string> s =
+                as<std::vector<std::string> > (points[i]);
             for (v_it = s.begin(); v_it != s.end(); ++v_it) {
                 v_t = hashFun (*v_it);
                 if (v.find ( (int) v_t) != v.end()) {
@@ -337,12 +429,15 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
             freqTable[i] = v;
         }
     }
+#ifdef VERBOSE
     //@{
     gettimeofday (&tv1, NULL);
     std::cout << "freqTable: "
-              << (tv1.tv_sec - tv0.tv_sec) * 1000000 + (tv1.tv_usec - tv0.tv_usec)
+              << (tv1.tv_sec - tv0.tv_sec) * 1000000
+              + (tv1.tv_usec - tv0.tv_usec)
               << std::endl;
     //@}
+#endif
     // initialize a cluster of size cluster
     // for std::random_shuffle
     srand ( (int) time (NULL));
@@ -356,9 +451,11 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     }
     std::random_shuffle (shuffle.begin(), shuffle.end());
     std::vector<int>::iterator shuffleIt = shuffle.begin();
+#ifdef VERBOSE
     //@{
     gettimeofday (&tv0, NULL);
     //@}
+#endif
     volatile bool skip = false;
     tmp.push_back (*shuffleIt);
     for (int i = 1; i < cloudSize; ++i) {
@@ -386,16 +483,22 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
         if (shuffleIt != shuffle.end())
             tmp.push_back (*shuffleIt);
     }
-    //@{
+
+#ifdef VERBOSE
+//@{
     gettimeofday (&tv1, NULL);
-    std::cout << "TIME: "
-              << (tv1.tv_sec - tv0.tv_sec) * 1000000 + (tv1.tv_usec - tv0.tv_usec)
+    std::cout << "VERBOSE: "
+              << (tv1.tv_sec - tv0.tv_sec) * 1000000
+              + (tv1.tv_usec - tv0.tv_usec)
               << std::endl;
     //@}
+#endif
     shuffle.clear();
+#ifdef VERBOSE
     //@{
-    gettimeofday (&tv0, NULL);
+
     //@}
+#endif
     // key is a placeholder
     std::map<int, cloud> clouds;
     for (int i = 0; i < cloudSize; ++i) {
@@ -406,14 +509,16 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
         cluster[tmp[i]] = i;
 //         std::cout << "#" << tmp[i] << " ";
     }
-    std::cout << std::endl;
+#ifdef VERBOSE
     //@{
     gettimeofday (&tv1, NULL);
-    std::cout << "TIME: "
+    std::cout << "VERBOSE: "
               << (tv1.tv_sec - tv0.tv_sec) * 1000000
               + (tv1.tv_usec - tv0.tv_usec)
               << std::endl;
     //@}
+#endif
+
     tmp.clear();
     volatile int which = 0;
     int iter = as<int> (iter_in); // assert positive in R level
@@ -423,14 +528,23 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     // fortunately points is large and k is sufficient to avoid this case
     while (iter--) {
         changed = 0;
+#ifdef VERBOSE
         //@{
         std::cout << "Loop Begin" << std::endl;
         gettimeofday (&tv0, NULL);
         //@}
+#endif
         for (int i = 0; i < pointsSize; ++i) {
             if (cluster[i] == -1 /* when initial */ ||
                     clouds [cluster[i]].center_index != i) {
-                which = whichClosest (&freqTable, fulltable, i, clouds, cloudSize);
+                /** _OPT_
+                 * point i only need to compare the distance from
+                 * updated centers with that from current center
+                 * _SOLUTION_
+                 * a vector of updated center
+                 */
+                which = whichClosest
+                        (&freqTable, fulltable, i, clouds, cloudSize);
                 if (cluster[i] != which) {
                     /* change cluster[i] state */
                     /* remove */
@@ -444,28 +558,40 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
                 }
             }
         }
+#ifdef VERBOSE
         //@{
         gettimeofday (&tv1, NULL);
         std::cout << (tv1.tv_sec - tv0.tv_sec) * 1000000
                   + (tv1.tv_usec - tv0.tv_usec)
                   << std::endl << "Loop End " << std::endl;
         //@}
+#endif
         if (changed == 0) break;
 //         for (int i = 0; i < cloudSize; ++i) {
 //             std::cout << "# " << clouds[i].center_index << " ";
 //         }
 //         std::cout << std::endl;
+#ifdef VERBOSE
         //@{
         std::cout << "updateCloudCenters Begin" << std::endl;
         gettimeofday (&tv0, NULL);
         //@}
+#endif
         updateCloudCenters (clouds, cloudSize, fulltable);
+#ifdef VERBOSE
         //@{
         gettimeofday (&tv1, NULL);
         std::cout << (tv1.tv_sec - tv0.tv_sec) * 1000000
                   + (tv1.tv_usec - tv0.tv_usec)
                   << std::endl << "updateCloudCenters End " << std::endl;
         //@}
+#endif
+#ifdef VERBOSE
+        //@{
+        // TODO output current clusters, it's nice for visualization
+        // Perhaps we could have a std::vector<clouds>
+        //@}
+#endif
 //         for (int i = 0; i < cloudSize; ++i) {
 //             std::cout << "# " << clouds[i].center_index << " ";
 //         }
