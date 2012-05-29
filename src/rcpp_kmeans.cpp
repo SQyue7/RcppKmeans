@@ -2,7 +2,6 @@
 #ifdef VERBOSE
 #include <sys/time.h>
 #endif
-#include <tr1/functional> // we use hash here ... ...
 #include <omp.h>
 
 //@{
@@ -25,26 +24,9 @@ typedef struct {
     int center_index; // one of dusts
     std::list<int> dusts; // we use remove
 } cloud;
-// typedef std::map<std::string, int> Point;
-typedef std::map<size_t, int> Point;
+typedef std::map<std::string, int> Point;
 typedef std::map<int, Point> Map;
 static double (*dist) (Point* xv, Point* yv);
-// //NOTE keys in std::map are sorted
-// static bool operator== (Point& l_in, Point& r_in)
-// {
-//     if (l_in.size() != r_in.size()) {
-//         return false;
-//     }
-//     Point::iterator l_it = l_in.begin();
-//     Point::iterator r_it = r_in.begin();
-//     for (; l_it != l_in.end() && r_it != r_in.end(); ++l_it, ++r_it) {
-//         if (*l_it != *r_it) {
-//             return false;
-//         }
-//     }
-//     return true;
-// }
-
 /**
  * Distances
  */
@@ -121,9 +103,7 @@ double cosine (Point* xv_in, Point* yv_in)
         }
     }
     xs = norm (xv_in);
-    // inner product, <y,y>
     ys = norm (yv_in);
-//     std::cout << "Cos " << sum << " " << xs << " " << ys << std::endl;
     return 1.0 - sum / (xs * ys);
 }
 //@}
@@ -341,13 +321,11 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     dist = cosine;
 
     int cloudSize = as<int> (clusterSize_in);
-    std::tr1::hash<std::string> hashFun;
     /**
      * it's better to match exactly rather than hash
      */
-    Map freqTable; // < index <<hash,count>,<hash,count>,.. > >
+    Map freqTable;
     std::vector<std::string>::iterator v_it;
-    volatile std::size_t v_t = 0LU;
 #ifdef VERBOSE
     //@{
     timeval tv0;
@@ -361,11 +339,10 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
             std::vector<std::string> s =
                 as<std::vector<std::string> > (points[i]);
             for (v_it = s.begin(); v_it != s.end(); ++v_it) {
-                v_t = hashFun (*v_it);
-                if (v.find ( (int) v_t) != v.end()) {
-                    v[ (int) v_t] ++;
+                if (v.find (*v_it) != v.end()) {
+                    v[*v_it] ++;
                 } else {
-                    v[ (int) v_t] = 1;
+                    v[*v_it] = 1;
                 }
             }
             freqTable[i] = v;
@@ -398,7 +375,6 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     //@}
 #endif
     volatile bool skip = false;
-    int skipPoint = -1;
     //TODO free
     int* tmp = (int*) alloca (cloudSize * sizeof (int));
     tmp[0]  = *clusterIt;
