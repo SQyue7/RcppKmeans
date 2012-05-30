@@ -363,7 +363,6 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     rand();
     // the value of cluster's element is the index of cloud that it belongs to
     std::vector<int> cluster (pointsSize);
-    std::vector<int> clusterTmp (pointsSize);
     for (int i = 0; i < pointsSize; ++i) {
         cluster[i] = i;
     }
@@ -400,7 +399,9 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
         } while (skip);
         tmp[i] = *clusterIt;
     }
+#ifdef VERBOSE
     std::cout << "skip " << (skip ? "true" : "flase") << std::endl;
+#endif
 #ifdef VERBOSE
 //@{
     gettimeofday (&tv1, NULL);
@@ -411,7 +412,7 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
     //@}
 #endif
     std::fill (cluster.begin(), cluster.end(), -1);
-    std::fill (clusterTmp.begin(), clusterTmp.end(), -1);
+    std::vector<int> clusterTmp (cluster.begin(), cluster.end());
 #ifdef VERBOSE
     //@{
     gettimeofday (&tv0, NULL);
@@ -495,7 +496,6 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
                     /* update */
                     cluster[i] = clusterTmp[i];
                     addToCenters (clouds, clusterTmp[i], i);
-                    // record clusterTmp[i]
                     changed = true;
                 }
             }
