@@ -471,9 +471,9 @@ SEXP Kmeans (SEXP points_in, SEXP clusterSize_in,
                 clusterTmp[i] = whichClosest (&freqTable, i,
                                               cluster[i],
                                               clouds, cloudSize);
-                #pragma omp flush(clusterTmp)
+//                 #pragma omp flush(clusterTmp)
             }
-            #pragma omp barrier
+//             #pragma omp barrier
         }
         //@}
         //@{
