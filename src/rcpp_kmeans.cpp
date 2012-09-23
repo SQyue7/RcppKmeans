@@ -4,17 +4,6 @@
 #endif
 #include <omp.h>
 
-//@{
-// Tip
-// Avoid writing to global data that is accessed from multiple threads.
-// Tip
-// Align shared global data to cache line boundaries.
-// Tip
-// Don't store temporary, thread specific data in an array indexed by the thread id or rank.
-// Tip
-// When parallelizing an algorithm, partition data sets along cache lines, not across cache lines.
-//@}
-
 using namespace Rcpp ;
 /**
  * Types, Constants and functions
@@ -28,11 +17,11 @@ typedef std::map<std::string, int> Point;
 typedef std::map<int, Point> Map;
 static double (*dist) (Point* xv, Point* yv);
 /**
- * Distances
+ * Distance functions
  */
 // TODO add more methods to calculate distances
 //@{
-//FIXME NOT CORRECT
+//FIXME INCORORECT, TBD
 // Euclidean distance
 /**
  * @brief Euclidian distance
@@ -146,8 +135,6 @@ double distance (Map* freqTable_in, int x_in, int y_in)
 }
 //@}
 
-
-
 /**
  * @brief find one center_index that is nearest to @a index_in
  *
@@ -176,7 +163,6 @@ int whichClosest (Map* freqTable_in,
     }
     return which;
 }
-
 
 //@{
 /**
@@ -258,7 +244,7 @@ int centroidX (std::list<int> & vec_in, Map* freqTable_in)
         for (int i = 0; i < s; ++i) {
             #pragma omp flush(es)
             es[i] = projection (& (*freqTable_in) [vec[i]], &p);
-            #pragma omp flush(es)
+//             #pragma omp flush(es)
         }
     }
 
